@@ -1,7 +1,7 @@
 nmea_navsat_driver
 ===============
 
-增加北斗卫星支持，增加发布[gps_common/GPSFix](http://docs.ros.org/api/gps_common/html/msg/GPSFix.html)话题，方便用户了解卫星连接状态
+增加北斗卫星支持，增加发布 [gps_common/GPSFix](http://docs.ros.org/api/gps_common/html/msg/GPSFix.html) 话题，方便用户了解卫星连接状态
 
 Add support for Beidou, add topic `extend_fix`, make it easier for user to get info about GPS status.
 
