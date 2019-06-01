@@ -35,6 +35,7 @@ import math
 import rospy
 
 from sensor_msgs.msg import NavSatFix, NavSatStatus, TimeReference
+from gps_common.msg import GPSFix, GPSStatus
 from geometry_msgs.msg import TwistStamped, QuaternionStamped
 from tf.transformations import quaternion_from_euler
 
@@ -47,6 +48,7 @@ class RosNMEADriver(object):
     def __init__(self):
         self.fix_pub = rospy.Publisher('fix', NavSatFix, queue_size=1)
         self.vel_pub = rospy.Publisher('vel', TwistStamped, queue_size=1)
+        self.extend_fix_pub = rospy.Publisher('extend_fix', GPSFix, queue_size=1)
         self.heading_pub = rospy.Publisher(
             'heading', QuaternionStamped, queue_size=1)
         self.time_ref_pub = rospy.Publisher(
@@ -116,6 +118,11 @@ class RosNMEADriver(object):
                 NavSatFix.COVARIANCE_TYPE_APPROXIMATED
             ]
         }
+        self.extend_fix = GPSFix()
+        self.star_map_gps = []
+        self.star_map_bd = []
+        self.star_use_gps = []
+        self.star_use_bd = []
 
     # Returns True if we successfully did something with the passed in
     # nmea_string
@@ -133,6 +140,8 @@ class RosNMEADriver(object):
                 nmea_string)
             return False
 
+        rospy.logdebug(parsed_sentence)
+
         if timestamp:
             current_time = timestamp
         else:
@@ -143,6 +152,10 @@ class RosNMEADriver(object):
         current_time_ref = TimeReference()
         current_time_ref.header.stamp = current_time
         current_time_ref.header.frame_id = frame_id
+
+        self.extend_fix.header.stamp = current_time
+        self.extend_fix.header.frame_id = frame_id
+
         if self.time_ref_source:
             current_time_ref.source = self.time_ref_source
         else:
@@ -199,11 +212,27 @@ class RosNMEADriver(object):
 
             self.fix_pub.publish(current_fix)
 
+            # set extend fix
+            self.extend_fix.status.header.stamp = current_time
+            self.extend_fix.status.header.frame_id = frame_id
+            self.extend_fix.status.status = gps_qual[1]
+            self.extend_fix.status.satellites_used = data['num_satellites']
+            self.extend_fix.status.motion_source = GPSStatus.SOURCE_GPS
+            self.extend_fix.status.orientation_source = GPSStatus.SOURCE_GPS
+            self.extend_fix.status.position_source = GPSStatus.SOURCE_GPS
+            self.extend_fix.latitude = current_fix.latitude
+            self.extend_fix.longitude = current_fix.longitude
+            self.extend_fix.altitude = current_fix.altitude
+            self.extend_fix.position_covariance = current_fix.position_covariance
+            self.position_covariance_type = current_fix.position_covariance_type
+
             if not math.isnan(data['utc_time']):
                 current_time_ref.time_ref = rospy.Time.from_sec(
                     data['utc_time'])
                 self.last_valid_fix_time = current_time_ref
                 self.time_ref_pub.publish(current_time_ref)
+                self.extend_fix.time = current_time_ref.time_ref.to_sec()
+
 
         elif not self.use_RMC and 'VTG' in parsed_sentence:
             data = parsed_sentence['VTG']
@@ -219,6 +248,9 @@ class RosNMEADriver(object):
                 current_vel.twist.linear.y = data['speed'] * \
                     math.cos(data['true_course'])
                 self.vel_pub.publish(current_vel)
+                self.extend_fix.track = data['true_course']
+                self.extend_fix.speed = data['speed']
+            self.extend_fix_pub.publish(self.extend_fix)
 
         elif 'RMC' in parsed_sentence:
             data = parsed_sentence['RMC']
@@ -264,6 +296,7 @@ class RosNMEADriver(object):
                 current_vel.twist.linear.y = data['speed'] * \
                     math.cos(data['true_course'])
                 self.vel_pub.publish(current_vel)
+                self.extend_fix.track = data['true_course']
         elif 'GST' in parsed_sentence:
             data = parsed_sentence['GST']
 
@@ -284,6 +317,91 @@ class RosNMEADriver(object):
                 current_heading.quaternion.z = q[2]
                 current_heading.quaternion.w = q[3]
                 self.heading_pub.publish(current_heading)
+        elif 'GSA' in parsed_sentence:
+            data = parsed_sentence['GSA']
+            self.star_use_gps = [data['sate_id1'], data['sate_id2'],
+                data['sate_id3'], data['sate_id4'], data['sate_id5'], data['sate_id6'], data['sate_id7'],
+                data['sate_id8'], data['sate_id9'], data['sate_id10'], data['sate_id11'], data['sate_id12']]
+            self.star_use_gps = filter(lambda star: star != 0, self.star_use_gps)
+            self.extend_fix.pdop = data['pdop']
+            self.extend_fix.hdop = data['hdop']
+            self.extend_fix.vdop = data['vdop']
+        elif 'BDGSA' in parsed_sentence:
+            data = parsed_sentence['BDGSA']
+            self.star_use_bd = [data['sate_id1'], data['sate_id2'],
+                data['sate_id3'], data['sate_id4'], data['sate_id5'], data['sate_id6'], data['sate_id7'],
+                data['sate_id8'], data['sate_id9'], data['sate_id10'], data['sate_id11'], data['sate_id12']]
+            self.star_use_bd = filter(lambda star: star != 0, self.star_use_bd)
+            self.extend_fix.pdop = data['pdop']
+            self.extend_fix.hdop = data['hdop']
+            self.extend_fix.vdop = data['vdop']
+            self.extend_fix.status.satellite_used_prn = self.star_use_gps + self.star_use_bd
+
+        elif 'GSV' in parsed_sentence:
+            data = parsed_sentence['GSV']
+            if data['index'] == 1:
+                self.star_map_gps = []
+            self.star_map_gps.append({
+                'id': data['id_satellites1'],
+                'elevation': data['elevation_satellites1'],
+                'azimuth': data['azimuth_satellites1'],
+                'snr': data['snr1']
+            })
+            self.star_map_gps.append({
+                'id': data['id_satellites2'],
+                'elevation': data['elevation_satellites2'],
+                'azimuth': data['azimuth_satellites2'],
+                'snr': data['snr2']
+            })
+            self.star_map_gps.append({
+                'id': data['id_satellites3'],
+                'elevation': data['elevation_satellites3'],
+                'azimuth': data['azimuth_satellites3'],
+                'snr': data['snr3']
+            })
+            self.star_map_gps.append({
+                'id': data['id_satellites4'],
+                'elevation': data['elevation_satellites4'],
+                'azimuth': data['azimuth_satellites4'],
+                'snr': data['snr4']
+            })
+            self.star_map_gps = filter(lambda star: star['id'] != 0, self.star_map_gps)
+        elif 'BDGSV' in parsed_sentence:
+            data = parsed_sentence['BDGSV']
+            if data['index'] == 1:
+                self.star_map_bd = []
+            self.star_map_bd.append({
+                'id': data['id_satellites1'],
+                'elevation': data['elevation_satellites1'],
+                'azimuth': data['azimuth_satellites1'],
+                'snr': data['snr1']
+            })
+            self.star_map_bd.append({
+                'id': data['id_satellites2'],
+                'elevation': data['elevation_satellites2'],
+                'azimuth': data['azimuth_satellites2'],
+                'snr': data['snr2']
+            })
+            self.star_map_bd.append({
+                'id': data['id_satellites3'],
+                'elevation': data['elevation_satellites3'],
+                'azimuth': data['azimuth_satellites3'],
+                'snr': data['snr3']
+            })
+            self.star_map_bd.append({
+                'id': data['id_satellites4'],
+                'elevation': data['elevation_satellites4'],
+                'azimuth': data['azimuth_satellites4'],
+                'snr': data['snr4']
+            })
+            self.star_map_bd = filter(lambda star: star['id'] != 0, self.star_map_bd)
+            self.star_map = self.star_map_gps + self.star_map_bd
+            if data['length'] == data['index']:
+                self.extend_fix.status.satellites_visible = len(self.star_map)
+                self.extend_fix.status.satellite_visible_prn = [star['id'] for star in self.star_map]
+                self.extend_fix.status.satellite_visible_snr = [star['snr'] for star in self.star_map]
+                self.extend_fix.status.satellite_visible_azimuth = [star['azimuth'] for star in self.star_map]
+                self.extend_fix.status.satellite_visible_z = [star['elevation'] for star in self.star_map]
         else:
             return False
 

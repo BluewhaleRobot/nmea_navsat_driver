@@ -121,6 +121,9 @@ parse_maps = {
         ("longitude_direction", str, 6),
         ("speed", convert_knots_to_mps, 7),
         ("true_course", convert_deg_to_rads, 8),
+        ("datetime", str, 9),
+        ("magnetic_variation", safe_float, 10),
+        ("magnetic_variation_direction", str, 11),
     ],
     "GST": [
         ("utc_time", convert_time, 1),
@@ -138,6 +141,82 @@ parse_maps = {
     "VTG": [
         ("true_course", safe_float, 1),
         ("speed", convert_knots_to_mps, 5)
+    ],
+    "GSV": [
+        ("length", safe_int, 1),
+        ("index", safe_int, 2),
+        ("num_satellites", safe_int, 3),
+        ("id_satellites1", safe_int, 4),
+        ("elevation_satellites1", safe_int, 5),
+        ("azimuth_satellites1", safe_int, 6),
+        ("snr1", safe_int, 7),
+        ("id_satellites2", safe_int, 8),
+        ("elevation_satellites2", safe_int, 9),
+        ("azimuth_satellites2", safe_int, 10),
+        ("snr2", safe_int, 11),
+        ("id_satellites3", safe_int, 12),
+        ("elevation_satellites3", safe_int, 13),
+        ("azimuth_satellites3", safe_int, 14),
+        ("snr3", safe_int, 15),
+        ("id_satellites4", safe_int, 16),
+        ("elevation_satellites4", safe_int, 17),
+        ("azimuth_satellites4", safe_int, 18),
+        ("snr4", safe_int, 19),
+    ],
+    "GSA": [
+        ("sate_id1", safe_int, 3),
+        ("sate_id2", safe_int, 4),
+        ("sate_id3", safe_int, 5),
+        ("sate_id4", safe_int, 6),
+        ("sate_id5", safe_int, 7),
+        ("sate_id6", safe_int, 8),
+        ("sate_id7", safe_int, 9),
+        ("sate_id8", safe_int, 10),
+        ("sate_id9", safe_int, 11),
+        ("sate_id10", safe_int, 12),
+        ("sate_id11", safe_int, 13),
+        ("sate_id12", safe_int, 14),
+        ("pdop", safe_int, 15),
+        ("hdop", safe_int, 16),
+        ("vdop", safe_int, 17),
+    ],
+    "BDGSV": [
+        ("length", safe_int, 1),
+        ("index", safe_int, 2),
+        ("num_satellites", safe_int, 3),
+        ("id_satellites1", safe_int, 4),
+        ("elevation_satellites1", safe_int, 5),
+        ("azimuth_satellites1", safe_int, 6),
+        ("snr1", safe_int, 7),
+        ("id_satellites2", safe_int, 8),
+        ("elevation_satellites2", safe_int, 9),
+        ("azimuth_satellites2", safe_int, 10),
+        ("snr2", safe_int, 11),
+        ("id_satellites3", safe_int, 12),
+        ("elevation_satellites3", safe_int, 13),
+        ("azimuth_satellites3", safe_int, 14),
+        ("snr3", safe_int, 15),
+        ("id_satellites4", safe_int, 16),
+        ("elevation_satellites4", safe_int, 17),
+        ("azimuth_satellites4", safe_int, 18),
+        ("snr4", safe_int, 19),
+    ],
+    "BDGSA": [
+        ("sate_id1", safe_int, 3),
+        ("sate_id2", safe_int, 4),
+        ("sate_id3", safe_int, 5),
+        ("sate_id4", safe_int, 6),
+        ("sate_id5", safe_int, 7),
+        ("sate_id6", safe_int, 8),
+        ("sate_id7", safe_int, 9),
+        ("sate_id8", safe_int, 10),
+        ("sate_id9", safe_int, 11),
+        ("sate_id10", safe_int, 12),
+        ("sate_id11", safe_int, 13),
+        ("sate_id12", safe_int, 14),
+        ("pdop", safe_int, 15),
+        ("hdop", safe_int, 16),
+        ("vdop", safe_int, 17),
     ]
 }
 
@@ -146,15 +225,21 @@ def parse_nmea_sentence(nmea_sentence):
     # Check for a valid nmea sentence
 
     if not re.match(
-            r'(^\$GP|^\$GN|^\$GL|^\$IN).*\*[0-9A-Fa-f]{2}$', nmea_sentence):
+            r'(^\$GP|^\$GN|^\$GL|^\$IN|^\$BD).*\*[0-9A-Fa-f]{2}$', nmea_sentence):
         logger.debug(
             "Regex didn't match, sentence not valid NMEA? Sentence was: %s" %
             repr(nmea_sentence))
         return False
     fields = [field.strip(',') for field in nmea_sentence.split(',')]
+    fields[-1] = fields[-1].split('*')[0]
 
     # Ignore the $ and talker ID portions (e.g. GP)
     sentence_type = fields[0][3:]
+
+    if fields[0] == "$BDGSA":
+        sentence_type = "BDGSA"
+    if fields[0] == "$BDGSV":
+        sentence_type = "BDGSV"
 
     if sentence_type not in parse_maps:
         logger.debug("Sentence type %s not in parse map, ignoring."
@@ -165,6 +250,9 @@ def parse_nmea_sentence(nmea_sentence):
 
     parsed_sentence = {}
     for entry in parse_map:
-        parsed_sentence[entry[0]] = entry[1](fields[entry[2]])
+        if entry[2] >= len(fields):
+            parsed_sentence[entry[0]] = 0
+        else:
+            parsed_sentence[entry[0]] = entry[1](fields[entry[2]])
 
     return {sentence_type: parsed_sentence}
